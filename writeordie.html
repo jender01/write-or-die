@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Write or Die</title>
+<style>
+:root{--bg:#1b2030;--ink:#e9ecf2;--mute:#8d96ab;--line:#323a52;--p:0;--ok:#6fcf97}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,sans-serif;display:flex;flex-direction:column;position:relative}
+body::before{content:"";position:fixed;inset:0;background:#c0182b;opacity:calc(var(--p)*.55);pointer-events:none;z-index:0}
+body.shake main{animation:sh .09s infinite}
+@keyframes sh{50%{transform:translateX(2px)}}
+header,main,footer{position:relative;z-index:1}
+header{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:end;padding:14px 20px;border-bottom:1px solid var(--line)}
+h1{font:700 22px Georgia,serif;margin:0 12px 0 0}
+label{display:flex;flex-direction:column;font-size:12px;color:var(--mute);gap:3px}
+select,input,button{font:inherit;background:#0f1320;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+input{width:84px}
+button{cursor:pointer}
+button.go{background:var(--ink);color:#14182a;font-weight:600;border-color:var(--ink)}
+button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid #8ab4ff;outline-offset:2px}
+main{flex:1;display:flex;flex-direction:column;min-height:0;padding:0 20px}
+.bar{height:6px;background:#0f1320;border-radius:3px;margin:14px 0 6px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--ok);transition:width .2s}
+.stats{display:flex;justify-content:space-between;color:var(--mute);font-size:14px}
+.msg{min-height:22px;font-weight:600}
+textarea{flex:1;width:100%;max-width:760px;margin:6px auto 14px;resize:none;background:transparent;color:var(--ink);border:0;font:20px/1.7 Georgia,"Iowan Old Style",serif;padding:8px 2px}
+textarea:disabled{opacity:.4}
+footer{display:flex;gap:10px;padding:10px 20px;border-top:1px solid var(--line);color:var(--mute);font-size:13px;align-items:center}
+footer span{flex:1}
+@media (prefers-reduced-motion:reduce){body.shake main{animation:none}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Write or Die</h1>
+  <label>Goal
+    <select id="gtype"><option value="words">Words</option><option value="min">Minutes</option></select>
+  </label>
+  <label>Target <input id="target" type="number" min="1" value="500"></label>
+  <label>Grace (sec) <input id="grace" type="number" min="1" value="5"></label>
+  <label>Consequence
+    <select id="mode">
+      <option value="gentle">Gentle: red warning</option>
+      <option value="normal" selected>Normal: red + alarm</option>
+      <option value="kamikaze">Kamikaze: deletes your words</option>
+    </select>
+  </label>
+  <button class="go" id="start">Start writing</button>
+</header>
+<main>
+  <div class="bar"><i id="fill"></i></div>
+  <div class="stats"><span id="wc">0 words</span><span id="time">0:00</span></div>
+  <div class="msg" id="msg"></div>
+  <textarea id="text" disabled placeholder="Set your goal, then press Start writing." aria-label="Writing area"></textarea>
+</main>
+<footer>
+  <span>Your text is kept in this browser and saved as you type.</span>
+  <button id="copy">Copy text</button>
+  <button id="dl">Download .txt</button>
+  <button id="clear">Clear</button>
+</footer>
+<script>
+const $=id=>document.getElementById(id), T=$('text');
+let running=false, last=0, t0=0, done=false, ac=null, osc=null, gain=null, lastDel=0;
+try{T.value=localStorage.getItem('wod_text')||''}catch(e){}
+const words=s=>(s.trim().match(/\S+/g)||[]).length;
+const fmt=s=>Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');
+
+function sound(p){
+  if(!ac)return;
+  if(p>0&&!osc){osc=ac.createOscillator();gain=ac.createGain();osc.type='sawtooth';osc.frequency.value=220;gain.gain.value=0;osc.connect(gain).connect(ac.destination);osc.start()}
+  if(osc){gain.gain.value=p*.12;osc.frequency.value=220+p*260;if(p===0){osc.stop();osc=null}}
+}
+function update(){
+  const w=words(T.value), el=(Date.now()-t0)/1000, gt=$('gtype').value, tg=+$('target').value||1;
+  $('wc').textContent=w+(w===1?' word':' words');
+  $('time').textContent=fmt(el);
+  const prog=gt==='words'?w/tg:el/(tg*60);
+  $('fill').style.width=Math.min(100,prog*100)+'%';
+  if(!done&&prog>=1){done=true;document.documentElement.style.setProperty('--p',0);sound(0);document.body.classList.remove('shake');$('msg').textContent='Goal reached. You can keep writing; the pressure is off.'}
+}
+function tick(){
+  if(!running)return;
+  update();
+  if(done)return;
+  const idle=(Date.now()-last)/1000, grace=+$('grace').value||5, m=$('mode').value;
+  const p=idle>grace?Math.min(1,(idle-grace)/6):0;
+  document.documentElement.style.setProperty('--p',p);
+  document.body.classList.toggle('shake',p>=1&&m!=='gentle');
+  $('msg').textContent=p>0?(m==='kamikaze'&&p>=1?'Your words are disappearing. Type!':'Keep typing!'):'';
+  if(m!=='gentle')sound(p);else sound(0);
+  if(m==='kamikaze'&&p>=1&&Date.now()-lastDel>700){
+    lastDel=Date.now();
+    T.value=T.value.replace(/\s*\S+\s*$/,'');
+    save();update();
+  }
+}
+function save(){try{localStorage.setItem('wod_text',T.value)}catch(e){}}
+
+$('start').onclick=()=>{
+  ac=ac||new (window.AudioContext||window.webkitAudioContext)();
+  if(ac.state==='suspended')ac.resume();
+  running=true;done=false;last=Date.now();t0=Date.now();
+  T.disabled=false;T.placeholder='Start typing…';T.focus();
+  $('start').textContent='Restart session';
+  $('msg').textContent='';
+  update();
+};
+T.addEventListener('input',()=>{last=Date.now();save();document.documentElement.style.setProperty('--p',0);document.body.classList.remove('shake');sound(0)});
+setInterval(tick,100);
+
+$('copy').onclick=async()=>{try{await navigator.clipboard.writeText(T.value);$('msg').textContent='Copied.'}catch(e){T.select();document.execCommand('copy')}};
+$('dl').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([T.value],{type:'text/plain'}));a.download='write-or-die.txt';a.click()};
+$('clear').onclick=()=>{if(confirm('Clear all text?')){T.value='';save();update()}};
+window.addEventListener('beforeunload',save);
+</script>
+</body>
+</html>
